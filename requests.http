@@ -1,0 +1,21 @@
+@baseUrl = http://127.0.0.1:5000
+
+### Generate English speech
+POST {{baseUrl}}/api/generate
+Content-Type: application/json
+Accept: audio/mpeg
+
+{
+  "text": "Hello, welcome to VocaNova.",
+  "language": "en"
+}
+
+### Generate Hindi speech
+POST {{baseUrl}}/api/generate
+Content-Type: application/json
+Accept: audio/mpeg
+
+{
+  "text": "नमस्ते, वोकानोवा में आपका स्वागत है।",
+  "language": "hi"
+}

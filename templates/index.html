@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111412">
+  <meta name="description" content="Turn your words into natural Hindi and English speech with VocaNova.">
+  <title>VocaNova | AI Voice Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <script src="{{ url_for('static', filename='js/script.js') }}" defer></script>
+</head>
+<body>
+  <div class="ambient ambient-one" aria-hidden="true"></div>
+  <div class="ambient ambient-two" aria-hidden="true"></div>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="VocaNova home">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" fill="none"><path d="M6 19.5V12.5M11 23V9M16 26V6M21 22V10M26 18V14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+      </span>
+      <span>Voca<span>Nova</span></span>
+    </a>
+    <div class="header-note"><span class="status-dot" aria-hidden="true"></span><span>Voice studio</span></div>
+  </header>
+
+  <main class="studio-shell">
+    <section class="intro" aria-labelledby="page-title">
+      <p class="eyebrow"><span class="eyebrow-line"></span> YOUR WORDS, IN VOICE</p>
+      <h1 id="page-title">Turn text into<br><span>natural voice.</span></h1>
+      <p class="intro-copy">Create natural-sounding AI speech in seconds.</p>
+      <div class="language-note" aria-label="Available languages">
+        <span class="language-note-item"><span class="mini-flag" aria-hidden="true">IN</span> Hindi</span>
+        <span class="note-divider" aria-hidden="true"></span>
+        <span class="language-note-item"><span class="mini-flag flag-en" aria-hidden="true">EN</span> English</span>
+      </div>
+    </section>
+
+    <section class="composer" aria-label="Text to speech generator">
+      <div class="composer-topline">
+        <div>
+          <p class="section-kicker">VOICE GENERATOR</p>
+          <h2>Start with your words</h2>
+        </div>
+        <span class="format-badge"><span aria-hidden="true">♫</span> MP3</span>
+      </div>
+
+      <fieldset class="language-picker" aria-describedby="language-help">
+        <legend>Choose a language</legend>
+        <div class="language-options">
+          <label class="language-option is-selected">
+            <input type="radio" name="language" value="en" checked>
+            <span class="option-flag flag-en" aria-hidden="true">EN</span>
+            <span class="option-copy"><strong>English</strong><small>Natural English</small></span>
+            <span class="option-check" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none"><path d="m3.5 8 3 3 6-6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          </label>
+          <label class="language-option">
+            <input type="radio" name="language" value="hi">
+            <span class="option-flag flag-hi" aria-hidden="true">हि</span>
+            <span class="option-copy"><strong>Hindi</strong><small>प्राकृतिक हिंदी</small></span>
+            <span class="option-check" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none"><path d="m3.5 8 3 3 6-6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          </label>
+        </div>
+        <span class="sr-only" id="language-help">Choose English or Hindi for speech generation.</span>
+      </fieldset>
+
+      <div class="text-field-wrap">
+        <div class="text-label-row"><label for="speech-text">Your script</label><span class="input-hint">Up to 5,000 characters</span></div>
+        <textarea id="speech-text" maxlength="5000" placeholder="Type something you want to hear..." spellcheck="true"></textarea>
+        <div class="textarea-footer">
+          <span id="text-feedback" class="text-feedback" aria-live="polite"></span>
+          <span class="character-count"><span id="character-count">0</span> / 5000</span>
+        </div>
+      </div>
+
+      <div class="action-row">
+        <button class="clear-button" id="clear-button" type="button" aria-label="Clear text" title="Clear text">
+          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 5h12M8 5V3.5h4V5m2.5 0-.6 10H6.1L5.5 5m2.2 3v4.5m4.6-4.5v4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button class="generate-button" id="generate-button" type="button">
+          <span class="button-loader" aria-hidden="true"></span>
+          <span class="button-label">Generate voice</span>
+          <svg class="button-arrow" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4.5 10h11m0 0-4.4-4.4m4.4 4.4-4.4 4.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+    </section>
+
+    <section class="result-panel" id="result-panel" aria-labelledby="result-title" hidden>
+      <div class="result-header">
+        <div class="result-title-group">
+          <span class="result-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M9 18V5l12-2v13M9 18c0 1.1-1.6 2-3.5 2S2 19.1 2 18s1.6-2 3.5-2S9 16.9 9 18Zm12-2c0 1.1-1.6 2-3.5 2S14 16.1 14 15s1.6-2 3.5-2 3.5.9 3.5 2Z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <div><p class="section-kicker">READY TO LISTEN</p><h2 id="result-title">Generated audio</h2></div>
+        </div>
+        <a class="download-button" id="download-button" href="#" download="vocanova-audio.mp3" aria-label="Download generated audio">
+          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 3v9m0 0 3.5-3.5M10 12 6.5 8.5M4 13.5v2A1.5 1.5 0 0 0 5.5 17h9a1.5 1.5 0 0 0 1.5-1.5v-2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span>Download</span>
+        </a>
+      </div>
+      <audio id="audio-player" controls preload="metadata" aria-label="Generated speech audio"></audio>
+      <p class="success-message" id="success-message" role="status"><span aria-hidden="true">✓</span> Voice generated successfully</p>
+    </section>
+
+    <footer class="site-footer"><span>VocaNova <span class="footer-dash">/</span> AI text to speech</span><span>Powered by <strong>ElevenLabs</strong></span></footer>
+  </main>
+
+  <div class="toast" id="toast" role="alert" aria-live="assertive" hidden>
+    <span class="toast-icon" aria-hidden="true">!</span><span id="toast-message"></span>
+    <button type="button" class="toast-close" id="toast-close" aria-label="Dismiss message">×</button>
+  </div>
+</body>
+</html>
