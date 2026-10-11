@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard | VocaNova</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="auth-page dashboard-page">
+  <main class="dashboard-shell">
+    <section class="dashboard-card">
+      <div class="dashboard-header">
+        <div>
+          <p class="eyebrow"><span class="eyebrow-line"></span> USER DASHBOARD</p>
+          <h1>Welcome, {{ user.name }}</h1>
+        </div>
+        <form method="post" action="{{ url_for('logout') }}">
+          <input type="hidden" name="csrf_token" value="{{ session.get('csrf_token', '') }}">
+          <button type="submit" class="secondary-button">Logout</button>
+        </form>
+      </div>
+
+      <div class="dashboard-grid">
+        <article class="dash-panel">
+          <h2>Studio access</h2>
+          <p>Continue creating polished voiceovers, multilingual narration, and audio projects.</p>
+          <a class="primary-button inline-button" href="{{ url_for('studio') }}">Open Voice Studio</a>
+        </article>
+
+        <article class="dash-panel">
+          <h2>Session</h2>
+          <p><strong>Email:</strong> {{ user.email }}</p>
+          <p><strong>Local account:</strong> Stored securely on this device/server.</p>
+        </article>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

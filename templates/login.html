@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login | VocaNova</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="auth-page">
+  <header class="page-topbar">
+    <nav class="page-nav" aria-label="Main navigation">
+      <a href="{{ url_for('login_page') }}" class="nav-chip">Home</a>
+      <a href="{{ url_for('login_page') }}" class="nav-chip active">Login</a>
+      <a href="{{ url_for('signup_page') }}" class="nav-chip">Create account</a>
+    </nav>
+  </header>
+  <main class="auth-shell">
+    <section class="auth-card">
+      <p class="eyebrow"><span class="eyebrow-line"></span> WELCOME BACK</p>
+      <h1>Login to VocaNova</h1>
+      {% if error %}
+        <p class="form-error">{{ error }}</p>
+      {% endif %}
+      <form method="post" action="{{ url_for('api_login') }}" class="auth-form">
+        <input type="hidden" name="csrf_token" value="{{ session.get('csrf_token', '') }}">
+        <label>
+          <span>Email</span>
+          <input type="email" name="email" required placeholder="you@example.com">
+        </label>
+        <label>
+          <span>Password</span>
+          <div class="password-field">
+            <input type="password" name="password" required placeholder="••••••••" class="password-input">
+            <button type="button" class="password-toggle" aria-label="Show password">Show</button>
+          </div>
+        </label>
+        <button type="submit" class="primary-button">Login</button>
+      </form>
+      <p class="auth-switch">Need an account? <a href="{{ url_for('signup_page') }}">Create one</a></p>
+      <p class="auth-link-back"><a href="{{ url_for('login_page') }}">Return to login</a></p>
+    </section>
+  </main>
+  <script src="{{ url_for('static', filename='js/script.js') }}" defer></script>
+</body>
+</html>

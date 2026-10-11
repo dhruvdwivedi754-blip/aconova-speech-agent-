@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#111412">
-  <meta name="description" content="Turn your words into natural Hindi and English speech with VocaNova.">
+  <meta name="description" content="Turn your words into natural multilingual speech with VocaNova.">
   <title>VocaNova | AI Voice Studio</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -16,34 +16,76 @@
   <div class="ambient ambient-one" aria-hidden="true"></div>
   <div class="ambient ambient-two" aria-hidden="true"></div>
   <header class="site-header">
-    <a class="brand" href="/" aria-label="VocaNova home">
+    <a class="brand" href="{{ url_for('studio') }}" aria-label="VocaNova home">
       <span class="brand-mark" aria-hidden="true">
         <svg viewBox="0 0 32 32" fill="none"><path d="M6 19.5V12.5M11 23V9M16 26V6M21 22V10M26 18V14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
       </span>
       <span>Voca<span>Nova</span></span>
     </a>
-    <div class="header-note"><span class="status-dot" aria-hidden="true"></span><span>Voice studio</span></div>
+    <nav class="header-actions" aria-label="Main navigation">
+      {% if user %}
+        <a class="nav-link" href="{{ url_for('dashboard') }}">Dashboard</a>
+        <form method="post" action="{{ url_for('logout') }}" class="logout-form">
+          <input type="hidden" name="csrf_token" value="{{ session.get('csrf_token', '') }}">
+          <button type="submit" class="nav-button">Logout</button>
+        </form>
+      {% else %}
+        <a class="nav-link" href="{{ url_for('login_page') }}">Login</a>
+        <a class="nav-button" href="{{ url_for('signup_page') }}">Create account</a>
+      {% endif %}
+    </nav>
   </header>
 
   <main class="studio-shell">
     <section class="intro" aria-labelledby="page-title">
       <p class="eyebrow"><span class="eyebrow-line"></span> YOUR WORDS, IN VOICE</p>
-      <h1 id="page-title">Turn text into<br><span>natural voice.</span></h1>
-      <p class="intro-copy">Create natural-sounding AI speech in seconds.</p>
+      <h1 id="page-title">
+        <span class="hero-title-start">🧑🏼Turn text into</span><br>
+        <span class="hero-title">natural voice.</span>
+      </h1>
+      <p class="intro-copy">Create polished multilingual speech, narration, and AI voice experiences for your audience.</p>
       <div class="language-note" aria-label="Available languages">
-        <span class="language-note-item"><span class="mini-flag" aria-hidden="true">IN</span> Hindi</span>
+        <span class="language-note-item"><span class="mini-flag flag-hi" aria-hidden="true">हि</span> Hindi</span>
         <span class="note-divider" aria-hidden="true"></span>
         <span class="language-note-item"><span class="mini-flag flag-en" aria-hidden="true">EN</span> English</span>
+        <span class="note-divider" aria-hidden="true"></span>
+        <span class="language-note-item"><span class="mini-flag flag-ta" aria-hidden="true">த</span> Tamil</span>
+        <span class="note-divider" aria-hidden="true"></span>
+        <span class="language-note-item"><span class="mini-flag flag-es" aria-hidden="true">ES</span> Spanish</span>
       </div>
     </section>
 
-    <section class="composer" aria-label="Text to speech generator">
+    <nav class="studio-page-switcher" aria-label="Studio sections">
+      <button type="button" class="page-switch is-active" data-panel-toggle="voice-generator">Voice Generator</button>
+      <button type="button" class="page-switch" data-panel-toggle="character-narration">Character narration</button>
+      <button type="button" class="page-switch" data-panel-toggle="voice-clone">Clone and reuse a voice</button>
+    </nav>
+
+    <section class="studio-panel composer is-active" data-panel="voice-generator" aria-label="Text to speech generator">
       <div class="composer-topline">
         <div>
           <p class="section-kicker">VOICE GENERATOR</p>
           <h2>Start with your words</h2>
         </div>
         <span class="format-badge"><span aria-hidden="true">♫</span> MP3</span>
+      </div>
+
+      <div class="agent-panel" aria-labelledby="agent-title">
+        <div class="agent-header">
+          <h3 id="agent-title">Choose a voice agent</h3>
+        </div>
+        <div class="agent-grid">
+          <label class="agent-card selected" data-agent="storyteller">
+            <input type="radio" name="agent" value="storyteller" checked>
+            <strong>Storyteller AI</strong>
+            <span>Stories, audiobooks, expressive narration</span>
+          </label>
+          <label class="agent-card" data-agent="professional">
+            <input type="radio" name="agent" value="professional">
+            <strong>Professional Narrator AI</strong>
+            <span>Educational content and tutorials</span>
+          </label>
+        </div>
       </div>
 
       <fieldset class="language-picker" aria-describedby="language-help">
@@ -61,8 +103,20 @@
             <span class="option-copy"><strong>Hindi</strong><small>प्राकृतिक हिंदी</small></span>
             <span class="option-check" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none"><path d="m3.5 8 3 3 6-6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
           </label>
+          <label class="language-option">
+            <input type="radio" name="language" value="ta">
+            <span class="option-flag flag-ta" aria-hidden="true">த</span>
+            <span class="option-copy"><strong>Tamil</strong><small>தமிழ்</small></span>
+            <span class="option-check" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none"><path d="m3.5 8 3 3 6-6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          </label>
+          <label class="language-option">
+            <input type="radio" name="language" value="es">
+            <span class="option-flag flag-es" aria-hidden="true">ES</span>
+            <span class="option-copy"><strong>Spanish</strong><small>Español</small></span>
+            <span class="option-check" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none"><path d="m3.5 8 3 3 6-6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          </label>
         </div>
-        <span class="sr-only" id="language-help">Choose English or Hindi for speech generation.</span>
+        <span class="language-translation-help" id="language-help">Write in any language; your text will be translated into the selected language for speech.</span>
       </fieldset>
 
       <div class="text-field-wrap">
@@ -86,6 +140,38 @@
       </div>
     </section>
 
+    <section class="studio-panel composer extra-panel" data-panel="character-narration" aria-label="Multi-character narration" hidden>
+      <div class="composer-topline">
+        <div>
+          <p class="section-kicker">MULTI-SPEAKER</p>
+          <h2>Character narration</h2>
+        </div>
+        <span class="format-badge"><span aria-hidden="true">✦</span> Script</span>
+      </div>
+      <p class="helper-copy">Use one speaker name per line, such as <strong>Narrator: ...</strong> or <strong>Rahul: ...</strong>. New speaker names alternate between distinct voices; keep the same name for each character.</p>
+      <textarea id="multi-script" rows="9" placeholder="Narrator: One day, Rahul entered a mysterious forest.
+Rahul: This place is incredibly quiet!
+Friend: Rahul, come over here!"> </textarea>
+      <div class="action-row compact-action-row">
+        <button class="secondary-button" id="generate-script-button" type="button">Generate narration</button>
+      </div>
+    </section>
+
+    <section class="studio-panel composer extra-panel" data-panel="voice-clone" aria-label="Voice cloning" hidden>
+      <div class="composer-topline">
+        <div>
+          <p class="section-kicker">VOICE CLONING</p>
+          <h2>Clone and reuse a voice</h2>
+        </div>
+        <span class="format-badge"><span aria-hidden="true">◌</span> Audio</span>
+      </div>
+      <p class="helper-copy">Upload an owned voice sample to prepare a branded voice profile if your ElevenLabs account supports voice cloning.</p>
+      <form id="clone-form" class="clone-form">
+        <input type="file" id="voice-sample" accept=".mp3,.wav,.m4a,.ogg" />
+        <button class="secondary-button" type="submit">Upload sample</button>
+      </form>
+    </section>
+
     <section class="result-panel" id="result-panel" aria-labelledby="result-title" hidden>
       <div class="result-header">
         <div class="result-title-group">
@@ -98,10 +184,10 @@
         </a>
       </div>
       <audio id="audio-player" controls preload="metadata" aria-label="Generated speech audio"></audio>
-      <p class="success-message" id="success-message" role="status"><span aria-hidden="true">✓</span> Voice generated successfully</p>
+      <p class="success-message" id="success-message" role="status"><span aria-hidden="true">✓</span> <span id="success-message-text">Voice generated successfully</span></p>
     </section>
 
-    <footer class="site-footer"><span>VocaNova <span class="footer-dash">/</span> AI text to speech</span><span>Powered by <strong>ElevenLabs</strong></span></footer>
+    <footer class="site-footer"><span>VocaNova <span class="footer-dash">/</span> AI text to speech</span><span>Powered by <strong>Microsoft Edge TTS</strong> and <strong>ElevenLabs</strong></span></footer>
   </main>
 
   <div class="toast" id="toast" role="alert" aria-live="assertive" hidden>
