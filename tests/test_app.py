@@ -1,5 +1,6 @@
 """Focused tests for request validation and safe TTS API responses."""
 
+import json
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -17,6 +18,7 @@ from services.elevenlabs_service import (
 from services.translation_service import (
     TranslationServiceError,
     _request_gemini,
+    detect_speaker_genders,
     translate_text,
 )
 
@@ -122,11 +124,12 @@ class GenerateEndpointTests(unittest.TestCase):
         self.assertNotIn("missing key", response.json["error"])
 
     def test_reports_translation_failure_instead_of_returning_wrong_language_audio(self):
-        translation_error = SpeechServiceError("Text translation failed.", 502, code="translation")
+        message = "Gemini could not find the configured model. Set GEMINI_MODEL to an available model in the local .env file."
+        translation_error = SpeechServiceError(message, 503, code="translation")
         with patch("app.generate_speech", side_effect=translation_error):
             response = self.post({"text": "नमस्ते", "language": "ta"})
-        self.assertEqual(response.status_code, 502)
-        self.assertIn("translate the text", response.json["error"])
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json["error"], message)
 
     def test_reports_plan_restricted_agent_voice_without_substituting_another_voice(self):
         voice_error = SpeechServiceError(
@@ -165,6 +168,13 @@ class GenerateEndpointTests(unittest.TestCase):
         with patch("app.generate_speech", side_effect=SpeechServiceError("rate limited", 429)):
             response = self.post({"text": "Hello", "language": "en"})
         self.assertEqual(response.status_code, 429)
+
+    def test_returns_safe_speech_provider_error(self):
+        message = "Could not reach ElevenLabs. Check your internet connection and try again."
+        with patch("app.generate_speech", side_effect=SpeechServiceError(message, 502)):
+            response = self.post({"text": "Hello", "language": "en"})
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json["error"], message)
 
     def test_hides_unexpected_service_failure(self):
         with patch("app.generate_speech", side_effect=RuntimeError("private details")):
@@ -399,6 +409,29 @@ class ElevenLabsServiceTests(unittest.TestCase):
         "GEMINI_API_KEY": "test-gemini-key",
         "GEMINI_MODEL": "test-model",
         "ELEVENLABS_API_KEY": "test-key",
+        "ELEVENLABS_VOICE_ID_EN": "voice-en",
+    }, clear=True)
+    @patch("services.elevenlabs_service.gTTS")
+    @patch("services.elevenlabs_service.requests.post")
+    def test_google_tts_fallback_failure_is_reported_safely(self, post, tts_factory):
+        post.return_value.status_code = 402
+        post.return_value.ok = False
+        post.return_value.text = "Paid plan required"
+        tts_factory.return_value.write_to_fp.side_effect = requests.ConnectionError(
+            "private provider details"
+        )
+
+        with self.assertRaises(SpeechServiceError) as context:
+            generate_speech("Hello", "en")
+
+        self.assertEqual(context.exception.status_code, 502)
+        self.assertIn("Free speech generation is temporarily unavailable", str(context.exception))
+        self.assertNotIn("private provider details", str(context.exception))
+
+    @patch.dict("os.environ", {
+        "GEMINI_API_KEY": "test-gemini-key",
+        "GEMINI_MODEL": "test-model",
+        "ELEVENLABS_API_KEY": "test-key",
         "STORYTELLER_VOICE_ID_EN": "story-voice",
     }, clear=True)
     @patch("services.elevenlabs_service._generate_free_agent_audio", return_value=b"edge-audio")
@@ -422,6 +455,64 @@ class ElevenLabsServiceTests(unittest.TestCase):
         self.assertEqual(audio, b"edge-audio")
         self.assertEqual(provider, "free-edge-tts")
         free_tts.assert_called_once_with("Hello", "en", "storyteller")
+
+    @patch.dict("os.environ", {
+        "GEMINI_API_KEY": "test-gemini-key",
+        "GEMINI_MODEL": "test-model",
+        "ELEVENLABS_API_KEY": "test-key",
+        "STORYTELLER_VOICE_ID_EN": "story-voice",
+    }, clear=True)
+    @patch("services.elevenlabs_service._generate_free_agent_audio", return_value=b"edge-audio")
+    @patch("services.elevenlabs_service.requests.post")
+    def test_agent_uses_free_voice_when_elevenlabs_is_unreachable(
+        self,
+        post,
+        free_tts,
+    ):
+        for error in (requests.ConnectionError("offline"), requests.Timeout("timed out")):
+            with self.subTest(error=type(error).__name__):
+                post.side_effect = error
+
+                audio, provider = generate_speech(
+                    "Hello",
+                    "en",
+                    agent_name="storyteller",
+                    return_provider=True,
+                )
+
+                self.assertEqual((audio, provider), (b"edge-audio", "free-edge-tts"))
+                free_tts.assert_called_with("Hello", "en", "storyteller")
+                post.reset_mock()
+
+    @patch.dict("os.environ", {
+        "GEMINI_API_KEY": "test-gemini-key",
+        "GEMINI_MODEL": "test-model",
+        "ELEVENLABS_API_KEY": "test-key",
+        "STORYTELLER_VOICE_ID_EN": "story-voice",
+    }, clear=True)
+    @patch("services.elevenlabs_service._generate_free_agent_audio", return_value=b"edge-audio")
+    @patch("services.elevenlabs_service.requests.post")
+    def test_agent_uses_free_voice_when_elevenlabs_is_busy_or_unavailable(
+        self,
+        post,
+        free_tts,
+    ):
+        for status_code in (429, 500, 503):
+            with self.subTest(status_code=status_code):
+                post.side_effect = None
+                post.return_value.status_code = status_code
+                post.return_value.ok = False
+                post.return_value.text = "provider unavailable"
+
+                audio, provider = generate_speech(
+                    "Hello",
+                    "en",
+                    agent_name="storyteller",
+                    return_provider=True,
+                )
+
+                self.assertEqual((audio, provider), (b"edge-audio", "free-edge-tts"))
+                free_tts.assert_called_with("Hello", "en", "storyteller")
 
     @patch.dict("os.environ", {
         "GEMINI_API_KEY": "test-gemini-key",
@@ -472,9 +563,10 @@ class ElevenLabsServiceTests(unittest.TestCase):
         "ELEVENLABS_API_KEY": "test-key",
         "STORYTELLER_VOICE_ID_EN": "story-en",
     }, clear=True)
+    @patch("services.elevenlabs_service.detect_speaker_genders", return_value={"Narrator": "female"})
     @patch("services.elevenlabs_service._generate_free_agent_audio", return_value=b"edge-audio")
     @patch("services.elevenlabs_service.requests.post")
-    def test_multispeaker_narrator_uses_free_agent_after_plan_rejection(self, post, free_tts):
+    def test_multispeaker_narrator_uses_free_agent_after_plan_rejection(self, post, free_tts, _detect):
         post.return_value.status_code = 402
         post.return_value.ok = False
         post.return_value.text = "Paid plan required"
@@ -492,9 +584,13 @@ class ElevenLabsServiceTests(unittest.TestCase):
             "storyteller",
         )
 
+    @patch("services.elevenlabs_service.detect_speaker_genders", return_value={
+        "Narrator": "male",
+        "Rahul": "female",
+    })
     @patch("services.elevenlabs_service.combine_audio_segments", side_effect=lambda segments: segments)
     @patch("services.elevenlabs_service.generate_speech", side_effect=[b"narrator", b"rahul", b"narrator-again"])
-    def test_multispeaker_assigns_alternating_voices_by_speaker_name(self, generate_speech, _combine):
+    def test_multispeaker_uses_female_narrator_and_male_rahul_voices(self, generate_speech, _combine, detect):
         audio = generate_script_audio(
             "Narrator: Once upon a time.\nRahul: Hello there.\nNarrator: The end.",
             language="hi",
@@ -509,11 +605,63 @@ class ElevenLabsServiceTests(unittest.TestCase):
             "storyteller",
         ])
         self.assertEqual([call.kwargs["voice_id"] for call in calls], [None, None, None])
+        detect.assert_called_once_with(
+            "Narrator: Once upon a time.\nRahul: Hello there.\nNarrator: The end.",
+            ["Narrator", "Rahul"],
+        )
         _combine.assert_called_once_with([b"narrator", b"rahul", b"narrator-again"])
 
+    @patch("services.elevenlabs_service.detect_speaker_genders", return_value={
+        "Narrator": "female",
+        "Friend": "male",
+    })
     @patch("services.elevenlabs_service.combine_audio_segments", side_effect=lambda segments: segments)
     @patch("services.elevenlabs_service.generate_speech", side_effect=[b"narrator", b"rahul"])
-    def test_multispeaker_honors_each_explicit_voice_assignment(self, generate_speech, _combine):
+    def test_multispeaker_uses_gemini_gender_for_unmapped_speaker(self, generate_speech, _combine, _detect):
+        audio = generate_script_audio(
+            "Narrator: Once upon a time.\nFriend: Hello there.",
+            language="hi",
+            agent_name="storyteller",
+        )
+
+        self.assertEqual(audio, [b"narrator", b"rahul"])
+        self.assertEqual(
+            [call.kwargs["agent_name"] for call in generate_speech.call_args_list],
+            ["storyteller", "professional"],
+        )
+        _combine.assert_called_once_with([b"narrator", b"rahul"])
+
+    @patch("services.elevenlabs_service.detect_speaker_genders", return_value={
+        "Narrator": "female",
+        "Rahul": "male",
+    })
+    @patch("services.elevenlabs_service.combine_audio_segments", side_effect=lambda segments: segments)
+    @patch("services.elevenlabs_service.generate_speech", side_effect=[b"narrator", b"rahul"])
+    def test_multispeaker_supports_inline_speaker_labels(self, generate_speech, _combine, _detect):
+        audio = generate_script_audio(
+            "Narrator isme ladki hi bolni chahiye Rahul: isme ladka hi bolna chahiye",
+            language="hi",
+            agent_name="storyteller",
+        )
+
+        self.assertEqual(audio, [b"narrator", b"rahul"])
+        self.assertEqual(
+            [call.kwargs["agent_name"] for call in generate_speech.call_args_list],
+            ["storyteller", "professional"],
+        )
+        self.assertEqual(
+            [call.args[0] for call in generate_speech.call_args_list],
+            ["isme ladki hi bolni chahiye", "isme ladka hi bolna chahiye"],
+        )
+        _combine.assert_called_once_with([b"narrator", b"rahul"])
+
+    @patch("services.elevenlabs_service.detect_speaker_genders", return_value={
+        "Narrator": "female",
+        "Rahul": "male",
+    })
+    @patch("services.elevenlabs_service.combine_audio_segments", side_effect=lambda segments: segments)
+    @patch("services.elevenlabs_service.generate_speech", side_effect=[b"narrator", b"rahul"])
+    def test_multispeaker_honors_each_explicit_voice_assignment(self, generate_speech, _combine, _detect):
         generate_script_audio(
             "Narrator: Once upon a time.\nRahul: Hello there.",
             speaker_assignments={"Narrator": "custom-narrator", "Rahul": "custom-rahul"},
@@ -636,6 +784,27 @@ class ElevenLabsServiceTests(unittest.TestCase):
             "test-gemini-key",
         )
 
+    def test_gemini_classifies_speaker_voice_gender(self):
+        self.translation_request.return_value.json.return_value["steps"][0]["content"][0]["text"] = (
+            '{"Narrator": "female", "Rahul": "male"}'
+        )
+
+        result = detect_speaker_genders(
+            "Narrator: Once upon a time.\nRahul: Hello there.",
+            ["Narrator", "Rahul"],
+        )
+
+        self.assertEqual(result, {"Narrator": "female", "Rahul": "male"})
+        request_payload = self.translation_request.call_args.args[2]
+        self.assertIn("voice gender", request_payload["system_instruction"])
+        self.assertEqual(
+            json.loads(request_payload["input"]),
+            {
+                "script": "Narrator: Once upon a time.\nRahul: Hello there.",
+                "speakers": ["Narrator", "Rahul"],
+            },
+        )
+
     def test_uses_configured_gemini_translation_model(self):
         self.translation_request.return_value.json.return_value["steps"][0]["content"][0]["text"] = "வணக்கம்"
 
@@ -658,7 +827,7 @@ class ElevenLabsServiceTests(unittest.TestCase):
 
         self.assertEqual(translated.text, "வணக்கம்")
         payload = self.translation_request.call_args.args[2]
-        self.assertEqual(payload["model"], "gemini-3.5-flash-lite")
+        self.assertEqual(payload["model"], "gemini-2.5-flash")
 
     def test_reports_unavailable_gemini_model(self):
         self.translation_request.return_value.status_code = 404

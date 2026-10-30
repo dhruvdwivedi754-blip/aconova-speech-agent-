@@ -299,12 +299,7 @@ def generate():
         if error.code == "voice_language":
             return jsonify(error=str(error)), 422
         if error.code == "translation":
-            return jsonify(
-                error=(
-                    "Could not translate the text into the selected language. "
-                    "Add or check GEMINI_API_KEY in the local .env file, then check your internet connection and Gemini quota."
-                )
-            ), error.status_code
+            return jsonify(error=str(error)), error.status_code
         if error.status_code == 503:
             return jsonify(error="Voice service is not configured. Please contact the administrator."), 503
         if error.status_code == 401:
@@ -318,7 +313,9 @@ def generate():
         if error.status_code == 400:
             return jsonify(error="Choose a supported language from English, Hindi, Tamil, or Spanish."), 400
         logger.error("Speech generation failed with status %s.", error.status_code)
-        return jsonify(error="Unable to generate speech right now. Please try again."), error.status_code
+        return jsonify(
+            error=str(error) or "Unable to generate speech right now. Please try again."
+        ), error.status_code
     except Exception:
         logger.exception("Unexpected error while generating speech.")
         return jsonify(error="Unable to generate speech right now. Please try again."), 500
@@ -361,6 +358,8 @@ def multispeaker_generation():
     try:
         audio = generate_script_audio(script, speaker_assignments=speaker_assignments, language=language, agent_name=agent_name)
     except SpeechServiceError as error:
+        if error.code == "speaker_detection":
+            return jsonify(error=str(error)), error.status_code
         if error.code == "translation":
             return jsonify(
                 error="Could not translate the script into the selected language. Check your internet connection and try again."

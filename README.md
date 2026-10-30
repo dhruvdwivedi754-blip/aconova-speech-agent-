@@ -41,7 +41,7 @@ Set your own values in the local `.env` file in the project root. Keep this file
 
 ```dotenv
 GEMINI_API_KEY=your_gemini_api_key
-GEMINI_MODEL=gemini-3.5-flash-lite
+GEMINI_MODEL=gemini-2.5-flash
 ELEVENLABS_API_KEY=your_elevenlabs_api_key
 ELEVENLABS_VOICE_ID_EN=your_english_voice_id
 ELEVENLABS_VOICE_ID_HI=your_hindi_voice_id
@@ -62,7 +62,7 @@ FLASK_DEBUG=false
 ELEVENLABS_CLONING_ENABLED=false
 ```
 
-Configure a different ElevenLabs voice ID per agent and language using the `STORYTELLER_VOICE_ID_<LANG>` and `PROFESSIONAL_VOICE_ID_<LANG>` variables. The studio offers Storyteller and Professional; Cinematic is not available because no voice IDs were supplied for it. If ElevenLabs has no API key configured or rejects an agent voice with HTTP 402, the app uses separate Microsoft Edge online TTS voices for each agent and English, Hindi, Tamil, and Spanish. Edge TTS does not require an API key or charge per character, but it requires an internet connection and its online service may be rate-limited or change availability. Other ElevenLabs errors are reported rather than silently switching providers. Translation still requires `GEMINI_API_KEY`; it defaults to Google's `gemini-3.5-flash-lite` and can be changed with `GEMINI_MODEL`. Gemini API free-tier access is subject to Google's model availability, quota, and rate limits.
+Configure a different ElevenLabs voice ID per agent and language using the `STORYTELLER_VOICE_ID_<LANG>` and `PROFESSIONAL_VOICE_ID_<LANG>` variables. For character narration, configure Storyteller with female voices and Professional with male voices: `Narrator` is assigned female, `Rahul` male, and Gemini classifies other speakers from the script. The studio offers Storyteller and Professional; Cinematic is not available because no voice IDs were supplied for it. If ElevenLabs has no API key configured or rejects an agent voice with HTTP 402, the app uses separate Microsoft Edge online TTS voices for each agent and English, Hindi, Tamil, and Spanish. Edge TTS does not require an API key or charge per character, but it requires an internet connection and its online service may be rate-limited or change availability. Other ElevenLabs errors are reported rather than silently switching providers. Speech translation and speaker classification require `GEMINI_API_KEY`; it defaults to Google's `gemini-2.5-flash` and can be changed with `GEMINI_MODEL`. Gemini API free-tier access is subject to Google's model availability, quota, and rate limits.
 
 ## Run locally
 

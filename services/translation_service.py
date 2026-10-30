@@ -1,5 +1,6 @@
 """Automatic language detection and translation for speech generation."""
 
+import json
 import logging
 import os
 from dataclasses import dataclass
@@ -48,7 +49,7 @@ SOURCE_LANGUAGE_NAMES = {
     "zh-tw": "Chinese",
 }
 MAX_TRANSLATION_LENGTH = 5000
-DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
 
 class TranslationServiceError(Exception):
@@ -127,11 +128,11 @@ def _request_gemini(url, api_key, payload):
     )
 
 
-def _translate_with_provider(text, target_language):
+def _generate_with_provider(system_instruction, text):
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key or api_key == "your_gemini_api_key_here":
         raise TranslationServiceError(
-            "Gemini translation is not configured. Add GEMINI_API_KEY to the local .env file.",
+            "Gemini is not configured. Add GEMINI_API_KEY to the local .env file.",
             status_code=503,
         )
 
@@ -142,15 +143,10 @@ def _translate_with_provider(text, target_language):
             status_code=503,
         )
 
-    target_name = OUTPUT_LANGUAGES[target_language]["name"]
     url = "https://generativelanguage.googleapis.com/v1beta/interactions"
     payload = {
         "model": model,
-        "system_instruction": (
-            f"Translate the user's text into {target_name}. "
-            "Preserve its meaning and tone. Return only the translation, "
-            "without explanations, labels, or quotation marks."
-        ),
+        "system_instruction": system_instruction,
         "input": text,
         "generation_config": {"temperature": 0},
         "store": False,
@@ -160,18 +156,18 @@ def _translate_with_provider(text, target_language):
         response = _request_gemini(url, api_key, payload)
     except requests.Timeout as error:
         raise TranslationServiceError(
-            "Gemini translation timed out. Please try again.",
+            "Gemini request timed out. Please try again.",
             status_code=504,
         ) from error
     except requests.RequestException as error:
         raise TranslationServiceError(
-            "Gemini translation is unavailable. Please try again.",
+            "Gemini is unavailable. Please try again.",
             status_code=502,
         ) from error
 
     if response.status_code == 429:
         raise TranslationServiceError(
-            "Gemini translation is busy or its quota has been reached. Please try again later.",
+            "Gemini is busy or its quota has been reached. Please try again later.",
             status_code=429,
         )
     if response.status_code in (401, 403):
@@ -186,7 +182,7 @@ def _translate_with_provider(text, target_language):
         )
     if response.status_code >= 400:
         raise TranslationServiceError(
-            "Gemini could not translate the text. Please check your model and try again.",
+            "Gemini could not process the request. Please check your model and try again.",
             status_code=502,
         )
 
@@ -201,7 +197,7 @@ def _translate_with_provider(text, target_language):
     steps = result.get("steps") if isinstance(result, dict) else None
     if not isinstance(steps, list):
         raise TranslationServiceError(
-            "Gemini did not return a translation. Please try again.",
+            "Gemini did not return a response. Please try again.",
             status_code=502,
         )
     translated = "".join(
@@ -221,10 +217,78 @@ def _translate_with_provider(text, target_language):
     ).strip()
     if not translated:
         raise TranslationServiceError(
-            "Gemini returned an empty translation.",
+            "Gemini returned an empty response.",
             status_code=502,
         )
     return translated
+
+
+def _translate_with_provider(text, target_language):
+    target_name = OUTPUT_LANGUAGES[target_language]["name"]
+    return _generate_with_provider(
+        (
+            f"Translate the user's text into {target_name}. "
+            "Preserve its meaning and tone. Return only the translation, "
+            "without explanations, labels, or quotation marks."
+        ),
+        text,
+    )
+
+
+def detect_speaker_genders(script_text, speaker_names):
+    """Ask Gemini for each speaker's intended voice gender."""
+    if not isinstance(script_text, str) or not script_text.strip():
+        raise TranslationServiceError("Script cannot be empty.", status_code=400)
+    if not isinstance(speaker_names, list) or not speaker_names:
+        raise TranslationServiceError("At least one speaker is required.", status_code=400)
+    if any(not isinstance(name, str) or not name.strip() for name in speaker_names):
+        raise TranslationServiceError("Speaker names must be non-empty strings.", status_code=400)
+
+    input_payload = json.dumps(
+        {"script": script_text, "speakers": speaker_names},
+        ensure_ascii=False,
+    )
+    result = _generate_with_provider(
+        (
+            "For every listed speaker, infer the most suitable voice gender from the "
+            "speaker's name and their dialogue in the script. Do not infer gender from "
+            "the dialogue's subject alone. If uncertain, use unknown. Return only a "
+            'valid JSON object mapping each exact speaker name to "female", "male", '
+            'or "unknown". Do not include markdown or explanation.'
+        ),
+        input_payload,
+    )
+    try:
+        gender_by_speaker = json.loads(result)
+    except json.JSONDecodeError as error:
+        raise TranslationServiceError(
+            "Gemini returned an invalid speaker classification.",
+            status_code=502,
+        ) from error
+
+    if not isinstance(gender_by_speaker, dict):
+        raise TranslationServiceError(
+            "Gemini returned an invalid speaker classification.",
+            status_code=502,
+        )
+
+    normalized = {}
+    for speaker in speaker_names:
+        gender = next(
+            (
+                value
+                for name, value in gender_by_speaker.items()
+                if isinstance(name, str) and name.casefold() == speaker.casefold()
+            ),
+            None,
+        )
+        if not isinstance(gender, str) or gender.casefold() not in {"female", "male", "unknown"}:
+            raise TranslationServiceError(
+                "Gemini did not classify every speaker. Please try again.",
+                status_code=502,
+            )
+        normalized[speaker] = gender.casefold()
+    return normalized
 
 
 def translate_text(text, target_language):

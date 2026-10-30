@@ -20,13 +20,18 @@ else:
 
 from services.translation_service import (
     TranslationServiceError,
+    detect_speaker_genders,
     translate_text,
 )
 
 try:
     from gtts import gTTS
+    from gtts.tts import gTTSError
 except ImportError:  # pragma: no cover - optional free fallback.
     gTTS = None
+    GTTS_EXCEPTIONS = ()
+else:
+    GTTS_EXCEPTIONS = (gTTSError,)
 
 try:
     from pydub import AudioSegment
@@ -169,8 +174,20 @@ def _generate_free_tts_audio(text, language):
     lang_map = {"en": "en", "hi": "hi", "ta": "ta", "es": "es"}
     lang = lang_map.get(language, "en")
     buffer = BytesIO()
-    tts = gTTS(text=text, lang=lang, slow=False)
-    tts.write_to_fp(buffer)
+    try:
+        tts = gTTS(text=text, lang=lang, slow=False)
+        tts.write_to_fp(buffer)
+    except (requests.RequestException, OSError) + GTTS_EXCEPTIONS as error:
+        logger.warning(
+            "Free Google TTS failed for %s (%s).",
+            language,
+            type(error).__name__,
+        )
+        raise SpeechServiceError(
+            "Free speech generation is temporarily unavailable. "
+            "Check your internet connection and try again.",
+            status_code=502,
+        ) from error
     audio = buffer.getvalue()
     if not audio:
         raise SpeechServiceError("Speech service is not configured.", status_code=503)
@@ -222,6 +239,11 @@ def _generate_free_agent_audio(text, language, agent_name):
     return audio
 
 
+def _generate_agent_fallback(text, language, agent_name, return_provider):
+    audio = _generate_free_agent_audio(text, language, agent_name.strip().lower())
+    return (audio, "free-edge-tts") if return_provider else audio
+
+
 def generate_speech(
     text,
     language,
@@ -243,8 +265,7 @@ def generate_speech(
     api_key = os.getenv("ELEVENLABS_API_KEY", "").strip()
     if not api_key or api_key == "your_elevenlabs_api_key_here":
         if agent and not voice_id:
-            audio = _generate_free_agent_audio(translated_text, language, agent_name.strip().lower())
-            return (audio, "free-edge-tts") if return_provider else audio
+            return _generate_agent_fallback(translated_text, language, agent_name, return_provider)
         logger.error("Missing ElevenLabs configuration: ELEVENLABS_API_KEY")
         raise SpeechServiceError("Speech service is not configured.", status_code=503)
 
@@ -272,11 +293,18 @@ def generate_speech(
     except requests.Timeout as error:
         detail = _safe_log_detail(error, api_key, resolved_voice_id, text)
         logger.warning("ElevenLabs request timed out: %s", detail or type(error).__name__)
+        if agent and not voice_id:
+            return _generate_agent_fallback(translated_text, language, agent_name, return_provider)
         raise SpeechServiceError("Speech generation timed out.", status_code=504) from error
     except requests.RequestException as error:
         detail = _safe_log_detail(error, api_key, resolved_voice_id, text)
         logger.warning("ElevenLabs request failed (%s): %s", type(error).__name__, detail)
-        raise SpeechServiceError("Speech generation failed.", status_code=502) from error
+        if agent and not voice_id:
+            return _generate_agent_fallback(translated_text, language, agent_name, return_provider)
+        raise SpeechServiceError(
+            "Could not reach ElevenLabs. Check your internet connection and try again.",
+            status_code=502,
+        ) from error
 
     if response.status_code in (401, 403):
         detail = _safe_log_detail(response.text, api_key, resolved_voice_id, text)
@@ -291,16 +319,14 @@ def generate_speech(
                     "ElevenLabs does not allow the selected custom voice on the current plan.",
                     status_code=402,
                 )
-            audio = _generate_free_agent_audio(translated_text, language, agent_name.strip().lower())
-            return (audio, "free-edge-tts") if return_provider else audio
+            return _generate_agent_fallback(translated_text, language, agent_name, return_provider)
         audio = _generate_free_tts_audio(translated_text, language)
         return (audio, "free-gtts") if return_provider else audio
     if response.status_code == 400:
         detail = _safe_log_detail(response.text, api_key, resolved_voice_id, text)
         logger.warning("ElevenLabs rejected the selected voice and language (HTTP 400): %s", detail)
         if agent and not voice_id:
-            audio = _generate_free_agent_audio(translated_text, language, agent_name.strip().lower())
-            return (audio, "free-edge-tts") if return_provider else audio
+            return _generate_agent_fallback(translated_text, language, agent_name, return_provider)
         raise SpeechServiceError(
             "The selected voice does not support this language. Choose a compatible voice or agent.",
             status_code=422,
@@ -309,14 +335,25 @@ def generate_speech(
     if response.status_code == 429:
         detail = _safe_log_detail(response.text, api_key, resolved_voice_id, text)
         logger.warning("ElevenLabs rate limit reached (HTTP 429): %s", detail)
+        if agent and not voice_id:
+            return _generate_agent_fallback(translated_text, language, agent_name, return_provider)
         raise SpeechServiceError("Speech service is busy. Please try again shortly.", status_code=429)
     if not response.ok:
         detail = _safe_log_detail(response.text, api_key, resolved_voice_id, text)
         logger.warning("ElevenLabs returned HTTP %s: %s", response.status_code, detail)
-        raise SpeechServiceError("Speech generation failed.", status_code=502)
+        if response.status_code >= 500 and agent and not voice_id:
+            return _generate_agent_fallback(translated_text, language, agent_name, return_provider)
+        raise SpeechServiceError(
+            f"ElevenLabs could not generate speech (HTTP {response.status_code}). "
+            "Please try again shortly.",
+            status_code=502,
+        )
     if not response.content:
         logger.warning("ElevenLabs returned an empty audio response.")
-        raise SpeechServiceError("Speech generation failed.", status_code=502)
+        raise SpeechServiceError(
+            "ElevenLabs returned an empty audio file. Please try again.",
+            status_code=502,
+        )
 
     return (response.content, "elevenlabs") if return_provider else response.content
 
@@ -331,21 +368,78 @@ def parse_script_lines(script_text):
         raise SpeechServiceError("Script cannot be empty.", status_code=400)
 
     segments = []
+    speaker_name = r"[A-Za-zÀ-ÖØ-öø-ÿ0-9\u0900-\u097F][A-Za-zÀ-ÖØ-öø-ÿ0-9.'-\u0900-\u097F]*(?:\s+[A-Za-zÀ-ÖØ-öø-ÿ0-9\u0900-\u097F][A-Za-zÀ-ÖØ-öø-ÿ0-9.'-\u0900-\u097F]*){0,1}"
+    speaker_pattern = rf"(?P<speaker>{speaker_name})\s*:\s*"
+
+    def looks_like_speaker(label):
+        parts = [part for part in re.split(r"\s+", label.strip()) if part]
+        if not parts:
+            return False
+        cleaned_parts = []
+        for part in parts:
+            cleaned = re.sub(r"^[^A-Za-zÀ-ÖØ-öø-ÿ0-9\u0900-\u097F]+|[^A-Za-zÀ-ÖØ-öø-ÿ0-9\u0900-\u097F]+$", "", part)
+            if cleaned:
+                cleaned_parts.append(cleaned)
+        if not cleaned_parts:
+            return False
+        if len(cleaned_parts) == 1:
+            return True
+        first = cleaned_parts[0]
+        if first.isascii() and first and not first[0].isupper():
+            return False
+        for part in cleaned_parts[1:]:
+            if part.lower() in {"sir", "ji", "didi", "bhai", "madam", "maam", "amma", "appa", "mama", "baba"}:
+                continue
+            if part.isascii() and part and part[0].isupper():
+                continue
+            return False
+        return True
+
     for line_number, raw_line in enumerate(script_text.splitlines(), start=1):
         line = raw_line.strip()
         if not line:
             continue
-        match = re.match(r"^([A-Za-z0-9 _.-]+)\s*:\s*(.+)$", line)
-        if match:
-            speaker = match.group(1).strip()
-            text = match.group(2).strip()
-            if not speaker or not text:
-                raise SpeechServiceError(f"Malformed dialogue line {line_number}: speaker and text are required.", status_code=400)
-            segments.append({"speaker": speaker, "text": text, "line_number": line_number})
-        else:
-            speaker = "Narrator"
-            text = line
-            segments.append({"speaker": speaker, "text": text, "line_number": line_number})
+
+        if line.count(":") == 1:
+            colon_index = line.index(":")
+            left = line[:colon_index].strip()
+            right = line[colon_index + 1:].strip()
+            if left and right and not looks_like_speaker(left):
+                prefix_part = left.rsplit(None, 1)
+                last_token = prefix_part[-1] if prefix_part else ""
+                if last_token and looks_like_speaker(last_token):
+                    prefix = left[: left.rfind(last_token)].strip()
+                    if prefix:
+                        prefix_tokens = re.split(r"\s+", prefix)
+                        first_token = prefix_tokens[0].strip(" :;,-") if prefix_tokens else ""
+                        if first_token and looks_like_speaker(first_token):
+                            leading_text = " ".join(prefix_tokens[1:]).strip()
+                            if leading_text:
+                                segments.append({"speaker": first_token, "text": leading_text, "line_number": line_number})
+                            else:
+                                segments.append({"speaker": "Narrator", "text": prefix, "line_number": line_number})
+                        else:
+                            segments.append({"speaker": "Narrator", "text": prefix, "line_number": line_number})
+                    segments.append({"speaker": last_token, "text": right, "line_number": line_number})
+                    continue
+
+        matches = [match for match in re.finditer(speaker_pattern, line) if looks_like_speaker(match.group("speaker"))]
+        if matches:
+            for index, match in enumerate(matches):
+                speaker = match.group("speaker").strip()
+                text_start = match.end()
+                text_end = matches[index + 1].start() if index + 1 < len(matches) else len(line)
+                text = line[text_start:text_end].strip()
+                if not speaker or not text:
+                    raise SpeechServiceError(
+                        f"Malformed dialogue line {line_number}: speaker and text are required.",
+                        status_code=400,
+                    )
+                segments.append({"speaker": speaker, "text": text, "line_number": line_number})
+            continue
+
+        segments.append({"speaker": "Narrator", "text": line, "line_number": line_number})
+
     if not segments:
         raise SpeechServiceError("No valid dialogue lines were found in the script.", status_code=400)
     return segments
@@ -373,7 +467,7 @@ def combine_audio_segments(audio_segments):
 
 
 def generate_script_audio(script_text, speaker_assignments=None, language="en", agent_name="storyteller"):
-    """Alternate distinct agent voices between speakers and combine narration."""
+    """Choose a voice for each speaker using Gemini's gender classification."""
     segments = parse_script_lines(script_text)
     assignments = speaker_assignments or {}
     if not isinstance(assignments, dict):
@@ -381,23 +475,36 @@ def generate_script_audio(script_text, speaker_assignments=None, language="en", 
 
     primary_agent = (agent_name or "storyteller").strip().lower()
     get_agent_config(primary_agent)
-    agent_names = list(VOICE_AGENTS)
-    primary_index = agent_names.index(primary_agent)
-    speaker_agents = {}
+    speakers = list(dict.fromkeys(segment["speaker"] for segment in segments))
+    try:
+        speaker_genders = detect_speaker_genders(script_text, speakers)
+    except TranslationServiceError as error:
+        raise SpeechServiceError(
+            str(error),
+            status_code=error.status_code,
+            code="speaker_detection",
+        ) from error
+
     generated = []
     for segment in segments:
         speaker = segment["speaker"]
-        if speaker not in speaker_agents:
-            speaker_agents[speaker] = agent_names[
-                (primary_index + len(speaker_agents)) % len(agent_names)
-            ]
+        normalized_speaker = speaker.casefold()
+        gender = speaker_genders[speaker]
+        if normalized_speaker == "narrator":
+            gender = "female"
+        elif normalized_speaker == "rahul":
+            gender = "male"
+        speaker_agent = {
+            "female": "storyteller",
+            "male": "professional",
+        }.get(gender, primary_agent)
         voice_id = assignments.get(speaker) or assignments.get(speaker.lower())
         generated.append(
             generate_speech(
                 segment["text"],
                 language,
                 voice_id=voice_id,
-                agent_name=speaker_agents[speaker],
+                agent_name=speaker_agent,
             )
         )
 
