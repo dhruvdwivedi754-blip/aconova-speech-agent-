@@ -18,6 +18,13 @@ except ImportError:  # pragma: no cover - reported when the free provider is req
 else:
     EDGE_TTS_EXCEPTIONS = (EdgeTTSException,)
 
+try:
+    from aiohttp import ClientError as AiohttpClientError
+except ImportError:  # pragma: no cover - aiohttp is installed with edge-tts.
+    AIOHTTP_EXCEPTIONS = ()
+else:
+    AIOHTTP_EXCEPTIONS = (AiohttpClientError,)
+
 from services.translation_service import (
     TranslationServiceError,
     detect_speaker_genders,
@@ -211,37 +218,48 @@ async def _stream_edge_tts_audio(text, voice):
     return audio_buffer.getvalue()
 
 
-def _generate_free_agent_audio(text, language, agent_name):
-    if edge_tts is None:
-        raise SpeechServiceError(
-            "The free voice provider is not installed. Run "
-            "`python -m pip install -r requirements.txt`.",
-            status_code=503,
-            code="speech_dependency",
-        )
+def _generate_free_agent_audio(text, language, agent_name, return_provider=False):
     agent_name = agent_name.strip().lower()
-    voice = FREE_AGENT_VOICES[agent_name][language]
-    try:
-        audio = asyncio.run(_stream_edge_tts_audio(text, voice))
-    except (OSError, asyncio.TimeoutError) + EDGE_TTS_EXCEPTIONS as error:
-        logger.warning("Free Edge TTS failed for %s/%s (%s).", agent_name, language, type(error).__name__)
-        raise SpeechServiceError(
-            "Free voice generation is temporarily unavailable. Please try again.",
-            status_code=502,
-        ) from error
-    if not audio:
-        logger.warning("Free Edge TTS returned an empty audio response for %s/%s.", agent_name, language)
-        raise SpeechServiceError(
-            "Free voice generation returned no audio. Please try again.",
-            status_code=502,
-        )
-    logger.info("Generated speech with the free Edge TTS %s voice for %s.", agent_name, language)
-    return audio
+    provider = "free-edge-tts"
+    if edge_tts is None:
+        logger.warning("Edge TTS is not installed; using Google TTS for %s/%s.", agent_name, language)
+        audio = _generate_free_tts_audio(text, language)
+        provider = "free-gtts"
+    else:
+        voice = FREE_AGENT_VOICES[agent_name][language]
+        try:
+            audio = asyncio.run(_stream_edge_tts_audio(text, voice))
+        except (OSError, asyncio.TimeoutError) + EDGE_TTS_EXCEPTIONS + AIOHTTP_EXCEPTIONS as error:
+            logger.warning(
+                "Free Edge TTS failed for %s/%s (%s); trying Google TTS.",
+                agent_name,
+                language,
+                type(error).__name__,
+            )
+            audio = _generate_free_tts_audio(text, language)
+            provider = "free-gtts"
+        else:
+            if not audio:
+                logger.warning(
+                    "Free Edge TTS returned no audio for %s/%s; trying Google TTS.",
+                    agent_name,
+                    language,
+                )
+                audio = _generate_free_tts_audio(text, language)
+                provider = "free-gtts"
+            else:
+                logger.info("Generated speech with the free Edge TTS %s voice for %s.", agent_name, language)
+
+    return (audio, provider) if return_provider else audio
 
 
 def _generate_agent_fallback(text, language, agent_name, return_provider):
-    audio = _generate_free_agent_audio(text, language, agent_name.strip().lower())
-    return (audio, "free-edge-tts") if return_provider else audio
+    return _generate_free_agent_audio(
+        text,
+        language,
+        agent_name.strip().lower(),
+        return_provider=return_provider,
+    )
 
 
 def generate_speech(

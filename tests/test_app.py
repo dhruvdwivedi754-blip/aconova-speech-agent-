@@ -124,7 +124,7 @@ class GenerateEndpointTests(unittest.TestCase):
         self.assertNotIn("missing key", response.json["error"])
 
     def test_reports_translation_failure_instead_of_returning_wrong_language_audio(self):
-        message = "Gemini could not find the configured model. Set GEMINI_MODEL to an available model in the local .env file."
+        message = "Gemini model is unavailable for this API key. Check GEMINI_MODEL in the local .env file and use a model enabled for the Gemini API."
         translation_error = SpeechServiceError(message, 503, code="translation")
         with patch("app.generate_speech", side_effect=translation_error):
             response = self.post({"text": "नमस्ते", "language": "ta"})
@@ -200,10 +200,11 @@ class ElevenLabsServiceTests(unittest.TestCase):
         self.detect_source.return_value = ("hi", "Hindi")
         self.translation_request.return_value.status_code = 200
         self.translation_request.return_value.json.return_value = {
-            "steps": [{
-                "type": "model_output",
-                "content": [{"type": "text", "text": "Gemini translated text"}],
-            }]
+            "candidates": [{
+                "content": {
+                    "parts": [{"text": "Gemini translated text"}],
+                },
+            }],
         }
 
     @patch.dict("os.environ", {
@@ -297,7 +298,7 @@ class ElevenLabsServiceTests(unittest.TestCase):
     @patch("services.elevenlabs_service.requests.post")
     def test_translates_hindi_input_to_tamil_before_elevenlabs(self, post):
         tamil_text = "வணக்கம், நீங்கள் எப்படி இருக்கிறீர்கள்?"
-        self.translation_request.return_value.json.return_value["steps"][0]["content"][0]["text"] = tamil_text
+        self.translation_request.return_value.json.return_value["candidates"][0]["content"]["parts"][0]["text"] = tamil_text
         post.return_value.status_code = 200
         post.return_value.ok = True
         post.return_value.content = b"mp3-audio"
@@ -309,14 +310,15 @@ class ElevenLabsServiceTests(unittest.TestCase):
         translation_args = self.translation_request.call_args
         self.assertEqual(
             translation_args.args[0],
-            "https://generativelanguage.googleapis.com/v1beta/interactions",
+            "https://generativelanguage.googleapis.com/v1beta/models/test-model:generateContent",
         )
         self.assertEqual(translation_args.args[1], "test-gemini-key")
         request_payload = translation_args.args[2]
-        self.assertEqual(request_payload["model"], "test-model")
-        self.assertIn("Tamil", request_payload["system_instruction"])
-        self.assertEqual(request_payload["input"], "नमस्ते, आप कैसे हैं?")
-        self.assertFalse(request_payload["store"])
+        self.assertIn("Tamil", request_payload["systemInstruction"]["parts"][0]["text"])
+        self.assertEqual(
+            request_payload["contents"][0]["parts"][0]["text"],
+            "नमस्ते, आप कैसे हैं?",
+        )
         self.assertEqual(post.call_args.kwargs["json"]["text"], tamil_text)
         self.assertIn("/voice-ta", post.call_args.args[0])
 
@@ -333,9 +335,9 @@ class ElevenLabsServiceTests(unittest.TestCase):
         for text, source, target in samples:
             with self.subTest(source=source, target=target):
                 self.translation_request.reset_mock()
-                self.translation_request.return_value.json.return_value["steps"][0][
+                self.translation_request.return_value.json.return_value["candidates"][0][
                     "content"
-                ][0]["text"] = f"translated-{target}"
+                ]["parts"][0]["text"] = f"translated-{target}"
                 self.detect_source.return_value = (source, source.upper())
                 result = translate_text(text, target)
 
@@ -347,9 +349,9 @@ class ElevenLabsServiceTests(unittest.TestCase):
                     {"en": "English", "hi": "Hindi", "ta": "Tamil", "es": "Spanish"}[
                         target
                     ],
-                    request_payload["system_instruction"],
+                    request_payload["systemInstruction"]["parts"][0]["text"],
                 )
-                self.assertEqual(request_payload["input"], text)
+                self.assertEqual(request_payload["contents"][0]["parts"][0]["text"], text)
 
     def test_same_language_input_skips_translation_provider(self):
         self.detect_source.return_value = ("es", "Spanish")
@@ -389,7 +391,7 @@ class ElevenLabsServiceTests(unittest.TestCase):
     @patch("services.elevenlabs_service.requests.post")
     def test_free_fallback_speaks_already_translated_tamil(self, post, tts_factory):
         tamil_text = "வணக்கம்"
-        self.translation_request.return_value.json.return_value["steps"][0]["content"][0]["text"] = tamil_text
+        self.translation_request.return_value.json.return_value["candidates"][0]["content"]["parts"][0]["text"] = tamil_text
         tts_factory.return_value.write_to_fp.side_effect = lambda buffer: buffer.write(b"free-audio")
         post.return_value.status_code = 402
         post.return_value.ok = False
@@ -401,7 +403,7 @@ class ElevenLabsServiceTests(unittest.TestCase):
         self.assertEqual(provider, "free-gtts")
         tts_factory.assert_called_once_with(text=tamil_text, lang="ta", slow=False)
         self.assertEqual(
-            self.translation_request.call_args.args[2]["input"],
+            self.translation_request.call_args.args[2]["contents"][0]["parts"][0]["text"],
             "नमस्ते",
         )
 
@@ -739,9 +741,9 @@ class ElevenLabsServiceTests(unittest.TestCase):
         original_text = "नमस्ते, आप कैसे हैं?"
         translated_text = "வணக்கம், நலமா?"
         self.detect_source.return_value = ("hi", "Hindi")
-        self.translation_request.return_value.json.return_value["steps"][0]["content"][0][
-            "text"
-        ] = translated_text
+        self.translation_request.return_value.json.return_value["candidates"][0]["content"][
+            "parts"
+        ][0]["text"] = translated_text
 
         audio = generate_speech(
             original_text,
@@ -752,7 +754,7 @@ class ElevenLabsServiceTests(unittest.TestCase):
         self.assertEqual(audio, b"mp3-audio")
         self.assertIn("/professional-voice", post.call_args.args[0])
         self.assertEqual(
-            self.translation_request.call_args.args[2]["input"],
+            self.translation_request.call_args.args[2]["contents"][0]["parts"][0]["text"],
             original_text,
         )
         self.assertEqual(post.call_args.kwargs["json"]["text"], translated_text)
@@ -775,7 +777,7 @@ class ElevenLabsServiceTests(unittest.TestCase):
         self.assertEqual(context.exception.status_code, 504)
 
     def test_gemini_returns_translation(self):
-        self.translation_request.return_value.json.return_value["steps"][0]["content"][0]["text"] = "வணக்கம்"
+        self.translation_request.return_value.json.return_value["candidates"][0]["content"]["parts"][0]["text"] = "வணக்கம்"
         result = translate_text("नमस्ते", "ta")
 
         self.assertEqual(result.text, "வணக்கம்")
@@ -785,7 +787,7 @@ class ElevenLabsServiceTests(unittest.TestCase):
         )
 
     def test_gemini_classifies_speaker_voice_gender(self):
-        self.translation_request.return_value.json.return_value["steps"][0]["content"][0]["text"] = (
+        self.translation_request.return_value.json.return_value["candidates"][0]["content"]["parts"][0]["text"] = (
             '{"Narrator": "female", "Rahul": "male"}'
         )
 
@@ -796,9 +798,9 @@ class ElevenLabsServiceTests(unittest.TestCase):
 
         self.assertEqual(result, {"Narrator": "female", "Rahul": "male"})
         request_payload = self.translation_request.call_args.args[2]
-        self.assertIn("voice gender", request_payload["system_instruction"])
+        self.assertIn("voice gender", request_payload["systemInstruction"]["parts"][0]["text"])
         self.assertEqual(
-            json.loads(request_payload["input"]),
+            json.loads(request_payload["contents"][0]["parts"][0]["text"]),
             {
                 "script": "Narrator: Once upon a time.\nRahul: Hello there.",
                 "speakers": ["Narrator", "Rahul"],
@@ -806,28 +808,34 @@ class ElevenLabsServiceTests(unittest.TestCase):
         )
 
     def test_uses_configured_gemini_translation_model(self):
-        self.translation_request.return_value.json.return_value["steps"][0]["content"][0]["text"] = "வணக்கம்"
+        self.translation_request.return_value.json.return_value["candidates"][0]["content"]["parts"][0]["text"] = "வணக்கம்"
 
         translated = translate_text("नमस्ते", "ta")
 
         self.assertEqual(translated.text, "வணக்கம்")
         self.translation_request.assert_called_once_with(
-            "https://generativelanguage.googleapis.com/v1beta/interactions",
+            "https://generativelanguage.googleapis.com/v1beta/models/test-model:generateContent",
             "test-gemini-key",
             self.translation_request.call_args.args[2],
         )
-        self.assertFalse(self.translation_request.call_args.args[2]["store"])
+        self.assertEqual(
+            self.translation_request.call_args.args[2]["generationConfig"],
+            {"temperature": 0},
+        )
 
-    def test_defaults_to_free_tier_gemini_flash_lite_model(self):
-        self.translation_request.return_value.json.return_value["steps"][0]["content"][0]["text"] = "வணக்கம்"
+    def test_defaults_to_stable_gemini_flash_lite_model(self):
+        self.translation_request.return_value.json.return_value["candidates"][0]["content"]["parts"][0]["text"] = "வணக்கம்"
         with patch.dict("os.environ", {
             "GEMINI_API_KEY": "test-gemini-key",
         }, clear=True):
             translated = translate_text("नमस्ते", "ta")
 
         self.assertEqual(translated.text, "வணக்கம்")
-        payload = self.translation_request.call_args.args[2]
-        self.assertEqual(payload["model"], "gemini-2.5-flash")
+        url = self.translation_request.call_args.args[0]
+        self.assertEqual(
+            url,
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+        )
 
     def test_reports_unavailable_gemini_model(self):
         self.translation_request.return_value.status_code = 404
@@ -836,7 +844,7 @@ class ElevenLabsServiceTests(unittest.TestCase):
             translate_text("नमस्ते", "ta")
 
         self.assertEqual(context.exception.status_code, 503)
-        self.assertIn("configured model", str(context.exception))
+        self.assertIn("GEMINI_MODEL", str(context.exception))
 
     def test_requires_gemini_api_key(self):
         with patch.dict("os.environ", {}, clear=True):
@@ -864,10 +872,9 @@ class ElevenLabsServiceTests(unittest.TestCase):
 
     def test_rejects_gemini_response_without_text_output(self):
         self.translation_request.return_value.json.return_value = {
-            "steps": [
-                {"type": "thought", "signature": "internal"},
-                {"type": "model_output", "content": [{"type": "image"}]},
-            ]
+            "candidates": [{
+                "content": {"parts": [{"inlineData": {"mimeType": "image/png"}}]},
+            }],
         }
 
         with self.assertRaises(TranslationServiceError) as context:
@@ -881,13 +888,13 @@ class ElevenLabsServiceTests(unittest.TestCase):
         payload = {"model": "test-model", "input": "नमस्ते"}
 
         _request_gemini(
-            "https://generativelanguage.googleapis.com/v1beta/interactions",
+            "https://generativelanguage.googleapis.com/v1beta/models/test-model:generateContent",
             "test-gemini-key",
             payload,
         )
 
         request_post.assert_called_once_with(
-            "https://generativelanguage.googleapis.com/v1beta/interactions",
+            "https://generativelanguage.googleapis.com/v1beta/models/test-model:generateContent",
             headers={
                 "x-goog-api-key": "test-gemini-key",
                 "Content-Type": "application/json",
@@ -897,7 +904,7 @@ class ElevenLabsServiceTests(unittest.TestCase):
         )
 
     def test_spanish_target_uses_auto_detect_for_non_spanish_input(self):
-        self.translation_request.return_value.json.return_value["steps"][0]["content"][0]["text"] = "Hola"
+        self.translation_request.return_value.json.return_value["candidates"][0]["content"]["parts"][0]["text"] = "Hola"
         self.detect_source.return_value = ("ta", "Tamil")
 
         translated = translate_text("வணக்கம்", "es")
@@ -905,7 +912,7 @@ class ElevenLabsServiceTests(unittest.TestCase):
         self.assertEqual(translated.text, "Hola")
         self.assertIn(
             "Spanish",
-            self.translation_request.call_args.args[2]["system_instruction"],
+            self.translation_request.call_args.args[2]["systemInstruction"]["parts"][0]["text"],
         )
 
     @patch.dict("os.environ", {

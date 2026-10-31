@@ -49,7 +49,7 @@ SOURCE_LANGUAGE_NAMES = {
     "zh-tw": "Chinese",
 }
 MAX_TRANSLATION_LENGTH = 5000
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
 
 
 class TranslationServiceError(Exception):
@@ -143,13 +143,14 @@ def _generate_with_provider(system_instruction, text):
             status_code=503,
         )
 
-    url = "https://generativelanguage.googleapis.com/v1beta/interactions"
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{model}:generateContent"
+    )
     payload = {
-        "model": model,
-        "system_instruction": system_instruction,
-        "input": text,
-        "generation_config": {"temperature": 0},
-        "store": False,
+        "systemInstruction": {"parts": [{"text": system_instruction}]},
+        "contents": [{"role": "user", "parts": [{"text": text}]}],
+        "generationConfig": {"temperature": 0},
     }
 
     try:
@@ -177,7 +178,7 @@ def _generate_with_provider(system_instruction, text):
         )
     if response.status_code == 404:
         raise TranslationServiceError(
-            "Gemini could not find the configured model. Set GEMINI_MODEL to an available model in the local .env file.",
+            "Gemini model is unavailable for this API key. Check GEMINI_MODEL in the local .env file and use a model enabled for the Gemini API.",
             status_code=503,
         )
     if response.status_code >= 400:
@@ -194,24 +195,23 @@ def _generate_with_provider(system_instruction, text):
             status_code=502,
         ) from error
 
-    steps = result.get("steps") if isinstance(result, dict) else None
-    if not isinstance(steps, list):
+    candidates = result.get("candidates") if isinstance(result, dict) else None
+    if not isinstance(candidates, list):
         raise TranslationServiceError(
             "Gemini did not return a response. Please try again.",
             status_code=502,
         )
     translated = "".join(
         part["text"]
-        for step in steps
+        for candidate in candidates[:1]
         if (
-            isinstance(step, dict)
-            and step.get("type") == "model_output"
-            and isinstance(step.get("content"), list)
+            isinstance(candidate, dict)
+            and isinstance(candidate.get("content"), dict)
+            and isinstance(candidate["content"].get("parts"), list)
         )
-        for part in step["content"]
+        for part in candidate["content"]["parts"]
         if (
             isinstance(part, dict)
-            and part.get("type") == "text"
             and isinstance(part.get("text"), str)
         )
     ).strip()
